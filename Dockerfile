@@ -1,31 +1,26 @@
-# Use an official PHP + Apache image
 FROM php:8.2-apache
 
-# Install required system dependencies
-RUN apt-get update && apt-get install -y \
-    libpng-dev \
-    libjpeg-dev \
-    libfreetype6-dev \
-    libzip-dev \
-    zip \
-    unzip \
-    git \
-    && docker-php-ext-configure gd --with-freetype --with-jpeg \
-    && docker-php-ext-install -j$(nproc) gd mysqli pdo pdo_mysql zip \
-    && a2enmod rewrite
+# Install required PHP extensions
+RUN docker-php-ext-install mysqli pdo pdo_mysql
 
-# Set working directory inside container
+# Enable Apache rewrite module
+RUN a2enmod rewrite
+
+# Change Apache to listen on port 8080
+RUN sed -i 's/80/8080/g' /etc/apache2/ports.conf \
+    && sed -i 's/:80/:8080/g' /etc/apache2/sites-available/000-default.conf
+
+# Set working directory
 WORKDIR /var/www/html
 
-# Copy Gibbon source into container
+# Copy project files into container
 COPY . /var/www/html/
 
-# Set correct permissions
-RUN chown -R www-data:www-data /var/www/html \
-    && chmod -R 755 /var/www/html
+# Fix permissions
+RUN chown -R www-data:www-data /var/www/html
 
-# Expose Apache port
+# Expose correct port
 EXPOSE 8080
 
-# Run Apache in foreground (Koyeb will expect this)
+# Start Apache
 CMD ["apache2-foreground"]
