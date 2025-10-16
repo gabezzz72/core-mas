@@ -85,7 +85,7 @@ class Alert
         $this->behaviourGateway = $behaviourGateway;
         $this->alertGateway = $alertGateway;
 
-        $this->alertTypes = $this->alertGateway->selectAllAlertTypes()->fetchGroupedUnique();
+        $this->alertTypes = $this->alertGateway->selectAlertTypes()->fetchGroupedUnique();
     }
 
     /**
@@ -119,18 +119,16 @@ class Alert
             // Enable filtering only specific types of alerts (eg: activities management pages)
             if (!empty($params['filter']) && !in_array($alert['type'], $params['filter'])) continue;
             
-            $details = $this->getAlertTextAndLink($gibbonPersonID, $alert['type'], $alert['level'] ?? $alert['privacy']);
-
             $output .= Component::render(Alert::class, [
                 'color'   => $alert['levelColor'] ?? $alert['color'] ?? '#939090',
                 'colorBG' => $alert['levelColorBG'] ?? $alert['colorBG'] ?? '#dddddd',
                 'large'   => $params['large'],
                 'target'  => $params['target'] == '_blank' ? '_blank' : '_self',
-            ] + $details + $alert);
+            ] + $alert);
         }
 
         if ($params['wrap'] == true) {
-            $output = "<div class='w-20 lg:w-24 h-6 -mt-6 text-left py-1 px-0 mx-auto'><div ".$params['attributes'].">{$output}</div></div>";
+            $output = "<div class='w-20 lg:w-24 h-6 -mt-2 text-left py-1 px-0 mx-auto'><div ".$params['attributes'].">{$output}</div></div>";
         }
         
         return $output;
@@ -148,14 +146,27 @@ class Alert
     }
 
     /**
-     * Gets whether an alert type is active based on the field in gibbonAlertType.
+     * Gets whether an alert type is active and automation is turned on.
      *
      * @param string $type
      * @return bool
      */
-    public function isAlertTypeActive(string $type)
+    public function isAutomaticAlertActive(string $type)
     {
-        return !empty($this->alertTypes[$type]) && $this->alertTypes[$type]['active'] == 'Y';
+        return !empty($this->alertTypes[$type]) && $this->alertTypes[$type]['active'] == 'Y' && $this->alertTypes[$type]['automatic'] == 'Y';
+    }
+
+    /**
+     * Gets an array of cached alert type details by name.
+     *
+     * @param string $type
+     * @return array
+     */
+    public function getActiveAlertTypes() : array
+    {
+        return array_filter($this->alertTypes, function ($type) {
+            return $type['active'] == 'Y';
+        });
     }
 
     /**
@@ -171,8 +182,10 @@ class Alert
         $alerts = [];
         
         foreach ($allAlerts as $alert) {
+            $details = $this->getAlertTextAndLink($gibbonPersonID, $alert['type'], $alert['level'] ?? $alert['privacy']);
+
             if (empty($alerts[$alert['type']])) {
-                $alerts[$alert['type']] = $alert;
+                $alerts[$alert['type']] = $details + $alert;
                 continue;
             }
 
@@ -183,7 +196,7 @@ class Alert
             $isMoreRecent = $alert['timestampCreated'] > $existing['timestampCreated'];
 
             if ($isHigherLevel || $isHigherContext || $isMoreRecent) {
-                $alerts[$alert['type']] = $alert;
+                $alerts[$alert['type']] = $details + $alert;
             }
         }
 
@@ -246,7 +259,7 @@ class Alert
      */
     protected function calculateIndividualNeedsAlerts(array &$alerts, string $gibbonPersonID)
     {
-        if (!$this->isAlertTypeActive('Individual Needs')) return;
+        if (!$this->isAutomaticAlertActive('Individual Needs')) return;
 
         $resultAlert = $this->inPersonDescriptorGateway->selectINDescriptorAlertLevelsByPerson($gibbonPersonID);
 
@@ -273,7 +286,7 @@ class Alert
      */
     protected function calculateAcademicAlerts(array &$alerts, string $gibbonPersonID)
     {
-        if (!$this->isAlertTypeActive('Academic')) return;
+        if (!$this->isAutomaticAlertActive('Academic')) return;
 
         $resultAlert = $this->markbookEntryGateway->selectMarkbookConcernsByStudentAndDate($this->session->get('gibbonSchoolYearID'), $gibbonPersonID, $this->days);
 
@@ -301,7 +314,7 @@ class Alert
      */
     protected function calculateBehaviourAlerts(array &$alerts, string $gibbonPersonID)
     {
-        if (!$this->isAlertTypeActive('Behaviour')) return;
+        if (!$this->isAutomaticAlertActive('Behaviour')) return;
 
         $resultAlert = $this->behaviourGateway->selectNegativeBehaviourByStudentAndDate($gibbonPersonID, $this->days);
 
@@ -328,7 +341,7 @@ class Alert
      */
     protected function calculateMedicalAlerts(array &$alerts, string $gibbonPersonID)
     {
-        if (!$this->isAlertTypeActive('Medical')) return;
+        if (!$this->isAutomaticAlertActive('Medical')) return;
 
         if ($alert = $this->medicalGateway->getHighestMedicalRisk($gibbonPersonID)) {
             $alertType = $this->getAlertType('Medical');
@@ -352,7 +365,7 @@ class Alert
      */
     protected function calculatePrivacyAlerts(array &$alerts, string $gibbonPersonID)
     {
-        if (!$this->isAlertTypeActive('Privacy')) return;
+        if (!$this->isAutomaticAlertActive('Privacy')) return;
 
         $privacySetting = $this->settingGateway->getSettingByScope('User Admin', 'privacy');
         if ($privacySetting != 'Y') return;

@@ -18,186 +18,233 @@ along with this program. If not, see <http://www.gnu.org/licenses/>.
 */
 
 use Gibbon\Forms\Form;
+use Gibbon\View\Component;
 use Gibbon\Services\Format;
 use Gibbon\Tables\DataTable;
-use Gibbon\Forms\DatabaseFormFactory;
-use Gibbon\Domain\StudentAlerts\AlertGateway;
-use Gibbon\View\Component;
 use Gibbon\UI\Components\Alert;
+use Gibbon\Support\Facades\Access;
+use Gibbon\Forms\DatabaseFormFactory;
 use Gibbon\Domain\School\YearGroupGateway;
-
-// Module includes
-require_once __DIR__ . '/moduleFunctions.php';
+use Gibbon\Domain\StudentAlerts\AlertGateway;
 
 if (!isActionAccessible($guid, $connection2, '/modules/Student Alerts/studentAlerts_manage.php')) {
 	// Access denied
 	$page->addError(__('You do not have access to this action.'));
 } else {
-    $highestAction = getHighestGroupedAction($guid, $_GET['q'], $connection2);
-    if ($highestAction == false) {
+    $action = Access::get('Student Alerts', 'studentAlerts_manage');
+    if (empty($action)) {
         $page->addError(__('The highest grouped action cannot be determined.'));
+        return;
+    } 
+
+    $page->breadcrumbs->add(__('Manage Student Alerts'));
+
+    $gibbonPersonID = $_GET['gibbonPersonID'] ?? '';
+    $gibbonFormGroupID = $_GET['gibbonFormGroupID'] ?? '';
+    $gibbonYearGroupID = $_GET['gibbonYearGroupID'] ?? '';
+    $gibbonYearGroupIDHOY = '';
+
+    $alertGateway = $container->get(AlertGateway::class);
+    
+
+    $yearGroup = $container->get(YearGroupGateway::class)->getYearGroupByPerson($session->get('gibbonPersonID'));
+    if ($action->allows('Manage Student Alerts_headOfYear') && !empty($yearGroup) && empty($gibbonPersonID) && empty($gibbonFormGroupID) && empty($gibbonYearGroupID)) {
+        $gibbonYearGroupIDHOY = $yearGroup['gibbonYearGroupID'];
+        $gibbonYearGroupID = $yearGroup['gibbonYearGroupID'];
+    }
+
+    // SEARCH
+    $form = Form::createSearch();
+    $form->setFactory(DatabaseFormFactory::create($pdo));
+
+    $row = $form->addRow();
+        $row->addLabel('gibbonPersonID',__('Student'));
+        $row->addSelectStudent('gibbonPersonID', $session->get('gibbonSchoolYearID'))->selected($gibbonPersonID)->placeholder();
+
+    $row = $form->addRow();
+        $row->addLabel('gibbonFormGroupID',__('Form Group'));
+        $row->addSelectFormGroup('gibbonFormGroupID', $session->get('gibbonSchoolYearID'))->selected($gibbonFormGroupID)->placeholder();
+
+    $row = $form->addRow();
+        $row->addLabel('gibbonYearGroupID',__('Year Group'));
+        $row->addSelectYearGroup('gibbonYearGroupID')->placeholder()->selected($gibbonYearGroupID);
+
+    $row = $form->addRow();
+        $row->addFooter();
+        $row->addSearchSubmit($session, __('Clear Filters'));
+
+    echo $form->getOutput();
+    
+
+    // CRITERIA
+    $criteria = $alertGateway->newQueryCriteria(true)
+        ->sortBy('status')
+        ->sortBy('timestampCreated', 'DESC')
+        ->filterBy('student', $gibbonPersonID)
+        ->filterBy('formGroup', $gibbonFormGroupID)
+        ->filterBy('yearGroup', $gibbonYearGroupID)
+        ->fromPOST();
+
+    $canManageAlerts = $action->allowsAny('Manage Student Alerts_all', 'Manage Student Alerts_headOfYear');
+    if (!$canManageAlerts && empty($gibbonPersonID) && empty($gibbonFormGroupID) && empty($gibbonYearGroupID)) {
+        $alerts = $alertGateway->queryAlertsBySchoolYear($criteria, $session->get('gibbonSchoolYearID'), $session->get('gibbonPersonID'));
     } else {
-        $page->breadcrumbs->add(__('Manage Alerts'));
+        $alerts = $alertGateway->queryAlertsBySchoolYear($criteria, $session->get('gibbonSchoolYearID'));
+    }
 
-        $gibbonPersonID = $_GET['gibbonPersonID'] ?? '';
-        $gibbonFormGroupID = $_GET['gibbonFormGroupID'] ?? '';
-        $gibbonYearGroupID = $_GET['gibbonYearGroupID'] ?? '';
+    // DATA TABLE
+    $table = DataTable::createPaginated('manageAlerts', $criteria);
+    $table->setTitle(__('Alerts'));
 
-        $alertGateway = $container->get(AlertGateway::class);
+    $table->addHeaderAction('add', __('Add Global Alert'))
+        ->setURL('/modules/Student Alerts/studentAlerts_add.php')
+        ->addParam('gibbonPersonID', $gibbonPersonID)
+        ->addParam('gibbonFormGroupID', $gibbonFormGroupID)
+        ->addParam('gibbonYearGroupID', $gibbonYearGroupID)
+        ->displayLabel();
 
-        $yearGroup = $container->get(YearGroupGateway::class)->getYearGroupByPerson($session->get('gibbonPersonID'));
-        if ($highestAction == 'Manage Student Alerts_headOfYear' && !empty($yearGroup) && empty($gibbonYearGroupID)) {
-            $gibbonYearGroupIDHOY = $yearGroup['gibbonYearGroupID'];
-            $gibbonYearGroupID = $yearGroup['gibbonYearGroupID'];
-        }
-
-        // SEARCH
-        $form = Form::createSearch();
-        $form->setFactory(DatabaseFormFactory::create($pdo));
-
-        $row = $form->addRow();
-            $row->addLabel('gibbonPersonID',__('Student'));
-            $row->addSelectStudent('gibbonPersonID', $session->get('gibbonSchoolYearID'))->selected($gibbonPersonID)->placeholder();
-
-        $row = $form->addRow();
-            $row->addLabel('gibbonFormGroupID',__('Form Group'));
-            $row->addSelectFormGroup('gibbonFormGroupID', $session->get('gibbonSchoolYearID'))->selected($gibbonFormGroupID)->placeholder();
-
-        $row = $form->addRow();
-            $row->addLabel('gibbonYearGroupID',__('Year Group'));
-            $row->addSelectYearGroup('gibbonYearGroupID')->placeholder()->selected($gibbonYearGroupID);
-
-        $row = $form->addRow();
-            $row->addFooter();
-            $row->addSearchSubmit($session, __('Clear Filters'));
-
-        echo $form->getOutput();
-        
-
-         // CRITERIA
-        $criteria = $alertGateway->newQueryCriteria(true)
-            ->sortBy('timestampCreated', 'DESC')
-            ->filterBy('student', $gibbonPersonID)
-            ->filterBy('formGroup', $gibbonFormGroupID)
-            ->filterBy('yearGroup', $gibbonYearGroupID)
-            ->fromPOST();
-
-        if ($highestAction == 'Manage Student Alerts_all' || $highestAction == 'Manage Student Alerts_headOfYear') {
-            $alerts = $alertGateway->queryAlertsBySchoolYear($criteria, $session->get('gibbonSchoolYearID'));
-        } else if ($highestAction == 'Manage Student Alerts_my') {
-            $alerts = $alertGateway->queryAlertsBySchoolYear($criteria, $session->get('gibbonSchoolYearID'), $session->get('gibbonPersonID'));
-        } else {
-            return;
-        }
-
-        // DATA TABLE
-        $table = DataTable::createPaginated('manageAlerts', $criteria);
-        $table->setTitle(__('Alerts'));
-
-        $table->addHeaderAction('add', __('Add Alert'))
+    if (Access::allows('Student Alerts', 'report_alertsByClass')) {
+        $table->addHeaderAction('addClass', __('Add Class Alert'))
             ->setURL('/modules/Student Alerts/studentAlerts_add.php')
             ->addParam('gibbonPersonID', $gibbonPersonID)
             ->addParam('gibbonFormGroupID', $gibbonFormGroupID)
             ->addParam('gibbonYearGroupID', $gibbonYearGroupID)
+            ->addParam('source', 'class')
+            ->setIcon('add')
             ->displayLabel();
+    }
 
-        $table->modifyRows(function($alert, $row) {
-            // if ($alert['status'] == 'Approved') $row->addClass('success');
-            if ($alert['status'] == 'Pending') $row->addClass('warning');
-            elseif ($alert['status'] == 'Declined') $row->addClass('dull');
-            return $row;
+    $table->modifyRows(function($alert, $row) {
+        if ($alert['status'] == 'Pending') $row->addClass('warning');
+        elseif ($alert['status'] == 'Declined') $row->addClass('dull');
+        elseif ($alert['status'] == 'Cancelled') $row->addClass('dull bg-stripe');
+        return $row;
+    });
+
+    $table->addMetaData('filterOptions', [
+        'scope:global'      => __('Scope').': '.__('Global'),
+        'scope:class'       => __('Scope').': '.__('Class'),
+        'status:approved'   => __('Status').': '.__('Approved'),
+        'status:pending'    => __('Status').': '.__('Pending'),
+        'status:declined'   => __('Status').': '.__('Declined'),
+        'status:cancelled'  => __('Status').': '.__('Cancelled'),
+        'context:automatic' => __('Automatic'),
+        'context:manual'    => __('Manual'),
+    ]);
+
+    $table->addColumn('tag', __('Tag'))
+        ->context('primary')
+        ->width('8%')
+        ->format(function($values) {
+            return Component::render(Alert::class, [
+                'color'   => $values['levelColor'] ?? $values['color'],
+                'colorBG' => $values['levelColorBG'] ?? $values['colorBG'],
+                'title' => $values['type'] ?? '',
+                'large' => true,
+            ] + $values);
         });
 
-        // $table->addExpandableColumn('comment')
-        //     ->format(function($alert) {
-        //         $output = '';
-        //         if (!empty($alert['comment'])) {
-        //             $output .= Format::bold(__('Incident')).'<br/>';
-        //             $output .= nl2br($alert['comment']).'<br/>';
-        //         }
-        //         return $output;
-        //     });
+    $table->addColumn('student', __('Student'))
+        ->description(__('Form Group'))
+        ->sortable(['student.surname', 'student.preferredName'])
+        ->context('primary')
+        ->format(function($values) {
+            return Format::nameLinked($values['gibbonPersonID'], '', $values['preferredName'], $values['surname'], 'Student', true, true, ['subpage' => 'Personal']);
+        })
+        ->formatDetails(function ($values) {
+            return Format::small($values['formGroup']);
+        });
+    
+    $table->addColumn('class', __('Class'))
+        ->sortable(['courseName', 'className'])
+        ->format(function ($values) {
+            return !empty($values['gibbonCourseClassID']) 
+                ? Format::courseClassName($values['courseName'], $values['className'])
+                : '';
+        });
 
-        $table->addColumn('tag', __('Tag'))
-            ->width('8%')
-            ->format(function($values) {
-                return Component::render(Alert::class, [
-                    'color'   => $values['levelColor'] ?? $values['color'],
-                    'colorBG' => $values['levelColorBG'] ?? $values['colorBG'],
-                    'title' => $values['type'] ?? '',
-                    'large' => true,
-                ] + $values);
-            });
+    $table->addColumn('type', __('Type'))
+        ->description(__('Level'))
+        ->formatDetails(function ($values) {
+            return Format::small($values['level']);
+        });
 
-        $table->addColumn('student', __('Student'))
-            ->description(__('Form Group'))
-            ->sortable(['student.surname', 'student.preferredName'])
-            ->context('primary')
-            ->format(function($student) {
-                return Format::nameLinked($student['gibbonPersonID'], '', $student['preferredName'], $student['surname'], 'Student', true, true, ['subpage' => 'Personal']) . '<br/><small><i>'.$student['formGroup'].'</i></small>';
-            });
+    $table->addColumn('teacher', __('Created By'))
+        ->description(__('Status'))
+        ->context('secondary')
+        ->sortable(['preferredNameCreator', 'surnameCreator'])
+        ->format(function($values) {
+            if ($values['context'] == 'Automatic') return Format::tag(__('Automatic'), 'empty');
+            return Format::name($values['titleCreator'], $values['preferredNameCreator'], $values['surnameCreator'], 'Staff');
+        })
+        ->formatDetails(function ($values) {
+            return $values['context'] != 'Automatic'
+                ? Format::small($values['status'])
+                : '';
+        });
 
-        $table->addColumn('type', __('Type'));
-        $table->addColumn('level', __('Level'));
-        $table->addColumn('status', __('Status'));
+    $table->addColumn('comment', __('Comment'))
+        ->format(function($values) {
+            if (empty($values['comment'])) return '';
+            return Format::tooltip(
+                icon('solid', 'chat-bubble-text', 'text-gray-500 size-5'),
+                '<div class="p-4 w-72">'.$values['comment'].'</div>',
+                'p-2', 'white');
+        });
 
-        // $table->addColumn('dateStart', __('Start Date'))
-        //     ->format(function($alert) {
-        //         if (!empty($alert['dateStart'])) {
-        //             return Format::dateReadable($alert['dateStart']);
-                    
-        //         }
-        //         return Format::tag(__('N/A'), 'dull');
-        //     });
+    $table->addColumn('timestampCreated', __('Date Recorded'))
+        ->context('primary')
+        ->format(function($alert) {
+            return Format::date($alert['timestampCreated']);
+        });
 
-        // $table->addColumn('dateEnd', __('End Date'))
-        //     ->format(function($alert) {
-        //         if (!empty($alert['dateEnd'])) {
-        //             return Format::dateReadable($alert['dateEnd']);
-        //         }
-        //         return Format::tag(__('N/A'), 'dull');
-        //     });
+    $table->addActionColumn()
+        ->addParam('gibbonPersonID', $gibbonPersonID)
+        ->addParam('gibbonFormGroupID', $gibbonFormGroupID)
+        ->addParam('gibbonYearGroupID', $gibbonYearGroupID)
+        ->addParam('gibbonAlertID')
+        ->format(function ($alert, $actions) use ($action, $session, $gibbonYearGroupIDHOY) {
+            $accessAll = $action->allows('Manage Student Alerts_all');
+            $accessHOY = $action->allows('Manage Student Alerts_headOfYear') && $alert['gibbonYearGroupID'] == $gibbonYearGroupIDHOY;
+            $accessCreator = $action->allows('Manage Student Alerts_my') && $alert['gibbonPersonIDCreated'] == $session->get('gibbonPersonID');
 
-        $table->addColumn('teacher', __('Created By'))
-            ->context('secondary')
-            ->sortable(['preferredNameCreator', 'surnameCreator'])
-            ->format(function($staff) {
-                return Format::name($staff['titleCreator'], $staff['preferredNameCreator'], $staff['surnameCreator'], 'Staff');
-            });
+            if (($accessAll || $accessHOY) && $alert['status'] == 'Pending') {
+                $actions->addAction('approve', __('Approve'))
+                    ->setURL('/modules/Student Alerts/studentAlerts_manage_status.php')
+                    ->addParam('status', 'Approved')
+                    ->setIcon('accept');
 
-        $table->addColumn('timestampCreated', __('Date Recorded'))
-            ->context('primary')
-            ->format(function($alert) {
-                return Format::date($alert['timestampCreated']);
-            });
-
-        $table->addActionColumn()
-            ->addParam('gibbonPersonID', $gibbonPersonID)
-            ->addParam('gibbonFormGroupID', $gibbonFormGroupID)
-            ->addParam('gibbonYearGroupID', $gibbonYearGroupID)
-            ->addParam('gibbonAlertID')
-            ->format(function ($alert, $actions) use ($highestAction) {
-                $actions->addAction('edit', __('Edit'))
-                    ->setURL('/modules/Student Alerts/studentAlerts_edit.php');
-
+                $actions->addAction('decline', __('Decline'))
+                    ->setURL('/modules/Student Alerts/studentAlerts_manage_status.php')
+                    ->addParam('status', 'Declined')
+                    ->setIcon('reject');
+            }
+            
+            if ($alert['status'] != 'Pending') {
                 $actions->addAction('view', __('View'))
                     ->setURL('/modules/Student Alerts/studentAlerts_manage_view.php');
-                
-                if ($highestAction == 'Manage Student Alerts_all') {
-                    if ($alert['status'] == 'Pending') {
-                        $actions->addAction('approve', __('Approve'))
-                            ->setIcon('iconTick')
-                            ->addParam('status', 'Approved')
-                            ->setURL('/modules/Student Alerts/studentAlerts_manage_approval.php');
+            }
 
-                        $actions->addAction('decline', __('Decline'))
-                            ->setIcon('iconCross')
-                            ->addParam('status', 'Declined')
-                            ->setURL('/modules/Student Alerts/studentAlerts_manage_approval.php');
-                    }
-                }
-            });
+            if ($alert['context'] == 'Automatic') return;
+            
+            if ($accessAll || $accessHOY || ($accessCreator && $alert['status'] == 'Pending')) {
+                $actions->addAction('edit', __('Edit'))
+                    ->setURL('/modules/Student Alerts/studentAlerts_edit.php');
+            }
 
-        echo $table->render($alerts);
-    }
+            if ((($accessAll || $accessHOY) && $alert['status'] == 'Approved') || ($accessCreator && $alert['status'] == 'Pending') || ($accessCreator && $alert['status'] == 'Approved' && !empty($alert['gibbonCourseClassID']))) {
+                $actions->addAction('cancel', __('Cancel'))
+                    ->setURL('/modules/Student Alerts/studentAlerts_manage_status.php')
+                    ->addParam('status', 'Cancelled')
+                    ->setIcon('reject');
+            }
+
+            if (($accessAll || $accessHOY) && ($alert['status'] == 'Declined' || $alert['status'] == 'Cancelled')) {
+                $actions->addAction('delete', __('Delete'))
+                    ->setURL('/modules/Student Alerts/studentAlerts_delete.php');
+            }
+        });
+
+    echo $table->render($alerts);
+
 }
